@@ -1,0 +1,107 @@
+---
+title: "20251125-26 4 species reentry analysis"
+author: Bin He
+output: html_notebook
+date: 2026-01-20, updated `r Sys.Date()`
+---
+
+```{r}
+require(tidyverse)
+require(gcplyr)
+require(cowplot)
+```
+
+```{r}
+# Set ggplot theme
+old = theme_set(theme_minimal_grid())
+```
+
+
+## Goal
+Determine and compare the delay in re-entering growth from -Pi starvation media into phosphate-replete media between the four species we are studying. A time course was conducted so that for each species, samples were taken after they spent different amount of time in the starvation media to evaluate how the length of starvation affects their recovery.
+
+## Data
+Growth curves collected on 2025-11-25 and 2025-11-26
+```{r}
+# using the read_wides() function from gcplyr to read in the data
+dat_wide <- bind_rows(
+  read_wides(files = "../input/20251125_ScCgPireentry.csv") |>
+    # convert time into proper formats
+    mutate(Time = time_length(hms(Time), unit = "hour")),
+  read_wides(files = "../input/20251126_Kl_Ca_reetnry.csv") |>
+    # convert time into proper formats
+    mutate(Time = time_length(hms(Time), unit = "hour")),
+  .id = "Plate"
+)
+
+# Transform our data to be tidy-shaped
+dat_tidy <- 
+  trans_wide_to_tidy(wides = dat_wide, id_cols = c("Plate", "file", "Time")) %>% 
+  #Set up the Well column so they plot in the correct order
+  mutate(Well = factor(Well,
+                       levels = paste0(rep(LETTERS[1:8], each = 12), 1:12)))
+
+
+# load plate design
+plate_design <- bind_rows(
+  read_csv("../input/20251125_plate_layout_Kl_Ca.csv"),
+  read_csv("../input/20251126_plate_layout_Sc_Cg.csv"),
+  .id = "Plate"
+)
+```
+
+## Analysis
+### EDA
+Identify empty wells
+```{r}
+tmp <- dat_tidy %>%
+  group_by(Plate, Well) %>% 
+  summarize(Max = max(Measurements, na.rm = TRUE)) %>% 
+  mutate(isEmpty = Max < 0.12)
+print("The following wells are empty:")
+filter(tmp, isEmpty) |> pull(Well) |> paste(collapse = ", ")
+```
+
+remove empty wells
+```{r}
+dat_filtered <- left_join(dat_tidy, tmp) %>% 
+  filter(!isEmpty)
+```
+
+Plotting growth curves for both plates
+```{r fig.width=8}
+p <- list()
+for(i in c("1", "2")){
+  p[[i]] <- dat_tidy %>% 
+    left_join(tmp) %>% 
+    filter(Plate == i) %>% 
+    ggplot(aes(x = Time, y = Measurements)) +
+    geom_line(aes(color = isEmpty)) +
+    scale_color_manual("Content", values = c("black", "red"),
+                       labels = c("Cells", "Empty wells")) +
+    facet_wrap(~Well, nrow = 8, ncol = 12) +
+    theme_minimal()
+}
+print(p[[1]]); print(p[[2]])
+```
+2. Calculate derivatives
+```{r}
+# use column 6 as the blank since it is in between the two sets of samples
+blank_wells <- paste0(LETTERS[1:8], '6')
+blank_value <- dat_tidy |> filter(Well %in% empty_wells) |> 
+  pull(Measurements) |> mean(na.rm = TRUE)
+
+dat_deriv <- dat_filtered %>% 
+  group_by(Well) %>% 
+  mutate(
+    # plain derivative
+    Deriv = calc_deriv(x = Time, y = Measurements, window_width_n = 5),
+    percap_deriv = calc_deriv(x = Time, y = Measurements,
+                              percapita = TRUE,
+                              blank = blank_value,
+                              window_width_n = 5,
+                              trans_y = "log")
+  )
+
+dat_merged <- left_join(meta_info, dat_deriv, by = "Well")
+```
