@@ -120,8 +120,8 @@ ggplot(data = dat_tidy, aes(x = Time, y = Measurements)) +
 
 ### Subtract the background
 ```{r}
-# use column 6 as the blank since it is in between the two sets of samples
-blank_wells <- paste0(LETTERS[1:8], '6')
+# the blank is the mean of all empty wells (max OD < 0.12, see above),
+# which includes column 6 and the outer edge wells
 blank_value <- dat_tidy |> filter(Well %in% empty_wells) |> 
   pull(Measurements) |> mean(na.rm = TRUE)
 dat_bg_rm <- dat_filtered %>% 
